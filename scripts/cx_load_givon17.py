@@ -6,8 +6,6 @@ import pickle
 import itertools
 import logging
 
-import path
-
 import numpy as np
 import numpy as np
 from pyorient.ogm import Graph, Config
