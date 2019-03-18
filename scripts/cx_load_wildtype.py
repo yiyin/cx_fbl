@@ -278,7 +278,7 @@ for subregion in subregions:
             if pre_rid != post_rid:
                 name = df_nodes.loc[pre_rid]['name']+'->'+ \
                        df_nodes.loc[post_rid]['name']+'_in_'+ \
-                       subregion.name.replace('/','-')
+                       subregion.name#.replace('/','-')
                 syn = graph.Synapses.create(name = name)
 
                 graph.SendsTo.create(graph.get_element(pre_rid), syn)
