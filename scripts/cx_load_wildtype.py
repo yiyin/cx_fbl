@@ -71,11 +71,14 @@ hypo_data = path.Path('hypo_neuron_data_new')
 
 # FB subregions list
 fb_subregions_list = []
-for i in range(1,6):
-    for j in range(1,5):
+for i in range(1, 6):
+    for j in range(1, 5):
         fb_subregions_list.append('({},L{})'.format(i,j))
-    for j in range(1,5):
+    for j in range(1, 5):
         fb_subregions_list.append('({},R{})'.format(i,j))
+
+for i in range(6, 10):
+    fb_subregions_list.append('({})'.format(i))
 
 # LAL subregions list
 LAL_subregions_list = ['RGT', 'RDG', 'RVG', 'RHB']

@@ -5267,6 +5267,7 @@
        presynaptic="PB/R4 PB/L5"
        postsynaptic="PB/R4 PB/R5 PB/R6 PB/R7 PB/R1 PB/R2 PB/R3 PB/R8 PB/R9 PB/L6 PB/L7 PB/L4 PB/L5 PB/L2 PB/L3 PB/L1 PB/L8 PB/L9"
        id="PB/L5|R4/b-PB/LR[1-9]/s"
+       label="PB/L5|R4/b-PB/LR[1-9]/s"
        class="PB-local neuron">
       <path
          style="fill:#000000;fill-rule:evenodd;stroke:#00ff00;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;marker-end:url(#marker5293)"
