@@ -83,7 +83,7 @@ class Subregion_State(object):
     def load_synapses(self, subregion, synapses):
         self.all_synapses[subregion].update(synapses)
 
-    def add_synapse(self, synapse):
+    def enable_synapse(self, synapse):
         subregion = self.get_synapse_subregion(synapse)
         num_activated_synapse = len(self.all_synapses[subregion])
         self.disabled_synapses[subregion].remove(synapse)
@@ -95,12 +95,12 @@ class Subregion_State(object):
         else:
             return None
 
-    def remove_synapse(self, synapse):
+    def disable_synapse(self, synapse):
         subregion = self.get_synapse_subregion(synapse)
         num_activated_synapse = len(self.all_synapses[subregion])
         self.disabled_synapses[subregion].add(synapse)
         self.all_synapses[subregion].remove(synapse)
-        if len(self.all_synapses) == 0:
+        if len(self.all_synapses[subregion]) == 0:
             self.active_subregion.remove(subregion)
             self.inactive_subregion.add(subregion)
             return subregion
@@ -110,9 +110,12 @@ class Subregion_State(object):
     def get_synapse_subregion(self, synapse):
         return synapse.split('_in_')[1]
 
-    def remove_subregion(self, subregion):
-        self.disabled_synapse[subregion].update(self.all_synapses)
+    def disable_subregion(self, subregion):
+        self.disabled_synapses[subregion].update(self.all_synapses)
         self.all_synapses[subregion] = set()
+        self.active_subregion.remove(subregion)
+        self.inactive_subregion.add(subregion)
+
 
 
 class Query(object):
@@ -201,6 +204,7 @@ class CX_Constructor(object):
 
         # initialize the configuration for CX diagram in NeuGFX
         self._initialize_diagram_config()
+        self.test = []
 
     def _load_modeled_neuropils(self):
         query_list = [
@@ -313,7 +317,6 @@ class CX_Constructor(object):
         self.data = nx.compose_all([nx_data_to_graph(data1),
                                     nx_data_to_graph(data2),
                                     nx_data_to_graph(data3)])
-        self._data = deepcopy(self.data)
 
     def _organize_rid_dict(self):
         """
@@ -348,7 +351,6 @@ class CX_Constructor(object):
             model_rid = self.find_predecessor_by_edge_class(rid, 'Models')[0]
             synapse_model_dict[self.data.nodes[model_rid]['name']] = model_rid
         self.rid_dict['SynapseModel'] = synapse_model_dict
-        self._rid_dict = deepcopy(self.rid_dict)
 
     def _subregion_innervation(self):
         self.subregion_arborization = {}
@@ -362,29 +364,13 @@ class CX_Constructor(object):
                           for v in self.data.get_edge_data(n, rid).values() \
                           if v['class'] == 'ArborizesIn' and 'b' in v['kind']])
                 }
-        self._subregion_arborization = deepcopy(self.subregion_arborization)
 
         self.subregions = Subregion_State(list(self.rid_dict['Subregion']))
         for name, rid in self.rid_dict['Subregion'].items():
             self.subregions.load_synapses(name,
                                           self.find_synapses_in_subregion(name))
 
-    def _initialize_region_states(self):
-        """
-        create a dictionary to record disabled synapses
-        in each subregion
-        """
-        self._subregion_disabled_synapses = {\
-                    name: set() for name \
-                    in self.rid_dict['Subregion'].keys()}
-
     def _initialize_diagram_config(self):
-        # config = {'inactive': {disabled_type: {item: {} for item in items}
-        #                            for disabled_type, items in self.disabled_list().items()},
-        #              'active': {'neuron': {},
-        #                         'synapse': {},
-        #                         'subregion': {}}}
-
         config = {'inactive': {'neuron': {},
                                'synapse': {},
                                'subregion': {}},
@@ -409,11 +395,6 @@ class CX_Constructor(object):
 
         self.config = config
         self.send_to_GFX()
-
-        # for disabled_type, items in self.disabled_list().items():
-        #     for item in items:
-        #         self.config['inactive'][disabled_type][item] = \
-        #             self.config['active'][disabled_type].pop(item)
 
     def send_to_GFX(self):
         config = {'cx': {k: v for items in self.config['active'].values()\
@@ -480,41 +461,52 @@ class CX_Constructor(object):
         lastObject = self.fbl.simExperimentConfig['lastObject']
         lastLabel = self.fbl.simExperimentConfig['lastLabel']
         action = self.fbl.simExperimentConfig['lastAction']
+        self.test.append([lastObject, lastLabel, action])
         print(lastObject, lastLabel, action)
         if lastObject == "neuron":
             if action == "deactivated":
-                self._remove_neuron(lastLabel)
+                self._disable_neuron(lastLabel)
             elif action == "activated":
-                self._add_neuron(lastLabel)
+                self._enable_neuron(lastLabel)
+            elif action == "toggled":
+                if lastLabel in self.config['active']['neuron']:
+                    self._disable_neuron(lastLabel)
+                elif lastLabel in self.config['inactive']['neuron']:
+                    self._enable_neuron(lastLabel)
         elif lastObject == "synapse":
-            if action == "deactivated":
-                self._remove_synapse(lastLabel)
-            elif action == "activated":
-                self._add_synapse(lastLabel)
+            if lastLabel in self.config['active']['synapse']:
+                self._disable_synapse(lastLabel)
+            elif lastLabel in self.config['inactive']['synapse']:
+                self._enable_synapse(lastLabel)
         elif lastObject == "region":
             if action == "deactivated":
-                self._remove_subregion(lastLabel)
+                self._disable_subregion(lastLabel)
             elif action == "activated":
-                self._add_subregion(lastLabel)
+                self._enable_subregion(lastLabel)
+        self.send_to_GFX()
 
     ## Removing Components
 
-    def show_removed(self):
-        print(self.fbl.simExperimentConfig['cx']['disabled'])
+    def show_disabled(self):
+        print(self.disabled)
 
     def all_inactive(self):
         return list(self.config['inactive']['neuron'].keys()) + \
                list(self.config['inactive']['synapse'].keys()) + \
                list(self.config['inactive']['subregion'].keys())
 
-    def remove_all(self):
+    def all_inactive_executable(self):
+        return list(self.config['inactive']['neuron'].keys()) + \
+               list(self.config['inactive']['synapse'].keys())
+
+    def disable_all(self):
         """
         Remove all neurons and subregions (thereby all synapses) in the diagram.
         """
 
-        all_elements = list(self._rid_dict['Subregion'].keys()) + \
-                       list(self._rid_dict['NeuronModel'].keys())
-                       #list(self.rid_dict['SynapseModel'].keys()) + \
+        all_elements = list(self.rid_dict['Subregion'].keys()) + \
+                       list(self.rid_dict['NeuronModel'].keys()) + \
+                       list(self.rid_dict['SynapseModel'].keys())
 
         active_neurons = list(self.config['active']['neuron'])
         for neuron_name in active_neurons:
@@ -524,39 +516,25 @@ class CX_Constructor(object):
         for synapse_name in active_synapses:
             self.config['inactive']['synapse'][synapse_name] = \
                 self.config['active']['synapse'].pop(synapse_name)
-        active_subregionss = list(self.config['active']['subregion'])
-        for synapse_name in active_subregions:
-            self.config['inactive']['synapse'][synapse_name] = \
-                self.config['active']['synapse'].pop(synapse_name)
+        active_subregions = list(self.config['active']['subregion'])
+        for subregion_name in active_subregions:
+            self.config['inactive']['subregion'][subregion_name] = \
+                self.config['active']['subregion'].pop(subregion_name)
+            self.subregions.disable_subregion(subregion_name)
 
         self.send_to_GFX()
 
+    # @property
+    # def disabled(self):
+    #     return self.fbl.simExperimentConfig['cx']['disabled']
+
     @property
-    def removed(self):
-        return self.fbl.simExperimentConfig['cx']['disabled']
+    def disabled(self):
+        return {'neuron': list(self.config['inactive']['neuron'].keys()),
+                'synapse': list(self.config['inactive']['synapse'].keys()),
+                'subregion': list(self.config['inactive']['subregion'].keys())}
 
-    def removed_by_type(self):
-        disabled = self.removed
-        disabled_list = {'synapse': [], 'neuron': [], 'subregion': []}
-        for k in disabled:
-            if len(k.split('->')) > 1:
-                disabled_list['synapse'].append(k)
-            else:
-                try:
-                    self.parser.parse(k)
-                    disabled_list['neuron'].append(k)
-                except ParseError:
-                    disabled_list['subregion'].extend(subregion_conversion(k))
-        return disabled_list
-
-    def disabled_list(self):
-        disabled_list = self.removed_by_type()
-        for subregion in disabled_list['subregion']:
-            disabled_list['synapse'].extend(
-                self.find_synapses_in_subregion(subregion))
-        return disabled_list
-
-    def _remove_single_neuron(self, neuron_name):
+    def _disable_single_neuron(self, neuron_name):
         """
         Main part of single neuron removal.
 
@@ -567,32 +545,20 @@ class CX_Constructor(object):
         """
         rid = self.rid_dict['Neuron'][neuron_name]
 
-        del self.rid_dict['Neuron'][neuron_name]
         in_edges = self.data.in_edges(rid, data = True)
         out_edges = self.data.out_edges(rid, data = True)
 
         for pre, post, k in list(in_edges):
             if k['class'] == 'SendsTo':
                 if self.data.node[pre]['class'] == 'Synapse':
-                    self._remove_synapse(self.data.node[pre]['name'])
-            else:
-                self.data.remove_edge(pre, post)
+                    self._disable_synapse(self.data.node[pre]['name'])
 
         for pre, post, k in list(out_edges):
             if k['class'] == 'SendsTo':
                 if self.data.node[post]['class'] == 'Synapse':
-                    self._remove_synapse(self.data.node[post]['name'])
-            elif k['class'] == 'ArborizesIn':
-                subregion = self.data.node[post]['name']
-                if 'b' in k['kind']:
-                    self.subregion_arborization[subregion]['b'].remove(rid)
-                if 's' in k['kind']:
-                    self.subregion_arborization[subregion]['s'].remove(rid)
-            else:
-                self.data.remove_edge(pre, post)
-        self.data.remove_node(rid)
+                    self._disable_synapse(self.data.node[post]['name'])
 
-    def _remove_neuron(self, neuron_name):
+    def _disable_neuron(self, neuron_name):
         """
         Remove a neuron from the diagram.
         Should be called by GUI after simExperimentConfig is updated.
@@ -602,52 +568,83 @@ class CX_Constructor(object):
         neuron_name: str
                      name of the neuron
         """
-        assert neuron_name in self.config['active']['neuron']
-        self.config['inactive']['neuron'][neuron_name] = \
-            self.config['active']['neuron'].pop(neuron_name)
-        self._remove_single_neuron(neuron_name)
+        if neuron_name in self.config['active']['neuron']:
+            self.config['inactive']['neuron'][neuron_name] = \
+                self.config['active']['neuron'].pop(neuron_name)
+            self._disable_single_neuron(neuron_name)
+
+
+    def disable_neurons(self, neurons):
+        """
+        Disable neurons that exist in the diagram.
+
+        Parameters
+        ----------
+        neurons:  list of neuron names
+        """
+        for neuron in neurons:
+            self._disable_neuron(neuron)
         self.send_to_GFX()
 
-        # config_tosend = json.dumps(self.config)
-        # self.fbl.JSCall(messageType = 'setExperimentConfig',
-        #                 data = config_tosend)
-
-    def _remove_synapse(self, synapse_name):
+    def _disable_synapse(self, synapse_name):
         """
         Remove a synapse from the diagram.
         Should be called by GUI after simExperimentConfig is updated.
 
         Parameters
         ----------
-        neuron_name: str
-                     name of the neuron
+        synapse_name: str
+                     name of the synapse
         """
-        assert synapse_name in self.config['active']['synapse']
-        self.config['inactive']['synapse'][synapse_name] = \
-            self.config['active']['synapse'].pop(synapse_name)
-        rid = self.rid_dict['Synapse'][synapse_name]
-        subregion = self.subregions.remove_synapse(synapse_name)
-        self.data.remove_node(rid)
-        if subregion is not None:
-            if subregion not in self.config['inactive']['subregion']:
-                self.config['inactive']['subregion'][subregion_nane] = \
-                    self.config['active']['subregion'].pop(subregion_name)
-                # don't remove subregion from self.data
+        if synapse_name in self.config['active']['synapse']:
+            self.config['inactive']['synapse'][synapse_name] = \
+                self.config['active']['synapse'].pop(synapse_name)
+            rid = self.rid_dict['Synapse'][synapse_name]
+            subregion = self.subregions.disable_synapse(synapse_name)
+            if subregion is not None:
+                if subregion in self.config['active']['subregion']:
+                    self.config['inactive']['subregion'][subregion] = \
+                        self.config['active']['subregion'].pop(subregion)
+                    # don't remove subregion from self.data
 
-    def _remove_subregion(self, subregion_name):
-        assert subregion_name in self.config['active']['subregion']
-        if subregion not in self.config['inactive']['subregion']:
-            self.config['inactive']['subregion'][subregion_nane] = \
-                self.config['active']['subregion'].pop(subregion_name)
-        self.subregion.remove_subregion(subregion)
-        for synapse in list(self.subregions.all_synapses[subregion_name]):
-            self._remove_synapse(synapse)
+    def disable_synapses(self, synapses):
+        """
+        Disable synapses that exist in the diagram.
 
-    def remove_neurons(self):
-        disabled_list = self.removed_by_type()
-        for subregion in disabled_list['subregion']:
-            disabled_list['synapse'].extend(
-                self.find_synapses_in_subregion(subregion))
+        Parameters
+        ----------
+        synapses:  list of synapse names
+        """
+        for synapse in synapses:
+            self._disable_synapse(synapse)
+        self.send_to_GFX()
+
+    def _disable_subregion(self, subregion_name):
+        if subregion_name in self.config['active']['subregion']:
+            # self.config['inactive']['subregion'][subregion_name] = \
+            #         self.config['active']['subregion'].pop(subregion_name)
+            for synapse in list(self.subregions.all_synapses[subregion_name]):
+                self._disable_synapse(synapse)
+
+    def disable_subregions(self, subregions):
+        """
+        Disable synapses that exist in the diagram.
+
+        Parameters
+        ----------
+        subregions:  list of subregion names
+        """
+        for subregion in subregions:
+            self._disable_subregion(subregion)
+        self.send_to_GFX()
+
+    def remove_components(self):
+        """
+        Query data base to remove disabled neurons and synapses.
+        This should be called right before self.execution()
+        """
+        disabled_neurons = list(self.config['inactive']['neuron'].keys())
+        disabled_synapses = list(self.config['inactive']['synapse'].keys())
         query_list = [
                 {"action": {"method":
                     {"query":{"name": self.CX_LPUs,
@@ -662,23 +659,36 @@ class CX_Constructor(object):
                  "object":{"memory":0}}
               ]
         self.querier.na_query(query_list, format = 'no_result')
-        query_list = [{"action":{"method":{"has":{"name": disabled_list['neuron']}}},"object":{"state":0}},
-                {"action":{"method":{"get_connected_ports":{}}},"object":{"memory":0}},
-                {"action":{"op":{"find_matching_ports_from_selector":{"memory":0}}},"object":{"state":0}},
-                {"action":{"op":{"__add__":{"memory":1}}},"object":{"memory":0}},
-                {"action":{"method":{"gen_traversal_in":{"min_depth":1, "pass_through":["SendsTo", "SynapseModel","instanceof"]}}},"object":{"memory":0}},
-                {"action":{"method":{"gen_traversal_out":{"min_depth":1, "pass_through":["SendsTo", "SynapseModel","instanceof"]}}},"object":{"memory":1}},
-                {"action":{"op":{"__add__":{"memory":1}}},"object":{"memory":0}},
-                {"action":{"op":{"__add__":{"memory":3}}},"object":{"memory":0}},
-                {"action":{"op":{"__sub__":{"memory":0}}},"object":{"state":0}},
-                {"action":{"method":{"has":{"name": disabled_list['synapse']}}},"object":{"state":0}},
-                {"action":{"op":{"__sub__":{"memory":0}}},"object":{"memory":1}}]
+
+        if len(disabled_neurons):
+            query_list = [{"action":{"method":{"has":{"name": disabled_neurons}}},"object":{"state":0}},
+                    {"action":{"method":{"get_connected_ports":{}}},"object":{"memory":0}},
+                    {"action":{"op":{"find_matching_ports_from_selector":{"memory":0}}},"object":{"state":0}},
+                    {"action":{"op":{"__add__":{"memory":1}}},"object":{"memory":0}},
+                    {"action":{"method":{"gen_traversal_in":{"min_depth":1, "pass_through":["SendsTo", "SynapseModel","instanceof"]}}},"object":{"memory":0}},
+                    {"action":{"method":{"gen_traversal_out":{"min_depth":1, "pass_through":["SendsTo", "SynapseModel","instanceof"]}}},"object":{"memory":1}},
+                    {"action":{"op":{"__add__":{"memory":1}}},"object":{"memory":0}},
+                    {"action":{"op":{"__add__":{"memory":3}}},"object":{"memory":0}},
+                    {"action":{"op":{"__sub__":{"memory":0}}},"object":{"state":0}}]
+        else:
+            query_list = []
+
+        if len(disabled_synapses):
+            if len(query_list):
+                query_list.extend(
+                    [{"action":{"method":{"has":{"name": disabled_synapses}}},"object":{"state":0}},
+                    {"action":{"op":{"__sub__":{"memory":0}}},"object":{"memory":1}}])
+            else:
+                query_list.extend(
+                    [{"action":{"method":{"has":{"name": disabled_synapses}}},"object":{"state":0}},
+                    {"action":{"op":{"__sub__":{"memory":0}}},"object":{"state":0}}])
+
         res = self.querier.na_query(query_list)
         return res
 
     ## End of Removing Components
 
-    def execute(self):
+    def execute(self, input_processors = [], steps = None, dt = None):
         res_info = self.fbl.client.session.call(u'ffbo.processor.server_information')
         msg = {"user": self.fbl.client._async_session._session_id,
                "servers": {'na': self.fbl.naServerID, 'nk': list(res_info['nk'].keys())[0]}}
@@ -690,7 +700,8 @@ class CX_Constructor(object):
         #     a = res['data']['Pattern'][i]['nodes']
         #     if len([k for k,v in a.items() if v['class'] == 'Port']) == 0:
         #         del res['data']['Pattern'][i]
-        self.fbl.execute_multilpu(res)
+        self.fbl.execute_multilpu(res, inputProcessors = input_processors,
+                                  steps = steps, dt = dt)
 
     def get_result(self):
         i = -2
@@ -704,62 +715,31 @@ class CX_Constructor(object):
             except:
                 break
         bs = []
-        keys = []
+        neurons = []
         for key in sim_output['data'].keys():
             A = np.array(sim_output['data'][key])
             b = A[:,1]
-            keys.append(key)
+            name = self.data.node[eval(key).decode('utf-8') if key[0]=='b' else key]['name']
+            neurons.append(name)
             bs.append(b)
 
         B = np.array(bs)
         print('Shape of Results:', B.shape)
-        return B, keys
+        return B, neurons
 
-    def add_neurons(self, neuron_dict, default_synapse_model):
+    def enable_neurons(self, neurons):
         """
-        Adding neurons specified in neuron_dict to current circuit and diagram.
+        Enable neurons that exist in the diagram.
 
         Parameters
         ----------
-        neuron_dict: {neuron_name:
-                      params_dict including class of model and its parameters}
+        neurons:  list of neuron names
         """
-        if not self.new_model_initialization:
-            raise Error('new model not initialized')
-        Neuropils = self.rid_dict['Neuropil']
-        Subregions = self.rid_dict['Subregion']
-        Tracts = self.rid_dict['Tract']
-        Synapses = self.rid_dict['Synapse']
-        Neurons = self.rid_dict['Neuron']
+        for neuron in neurons:
+            self._enable_neuron(neuron)
+        self.send_to_GFX()
 
-        new_add = {}
-        new_add_name_to_key = {}
-
-        for neuron_name, params in neuron_dict.items():
-            params_copy = deepcopy(params)
-            assert('class' in params_copy)
-            exist_rid = self.check_if_neuron_exists(neuron_name)
-            if exist_rid is None:
-                parsed = self.parser.parse(neuron_name)
-                neuron_rid = self.add_new_neuron(neuron_name, parsed)
-                new_add[neuron_rid] = self.data.nodes[neuron_rid]
-                new_add_name_to_key[neuron_name] = neuron_rid
-            ## if neuron already exists, update its parameters
-            else:
-                params_copy['name'] = neuron_name
-                self.updated[exist_rid] = params_copy
-
-
-        self.added.update(new_add)
-        generate_svg([k['name'] for k in new_add.values()],
-                     fout = 'cx_{}.svg'.format(self.model_version))
-        self.fbl.sendSVG('my_{}'.format(self.model_version),
-                         'cx_{}.svg'.format(self.model_version))
-        self.fbl.loadSVG('my_cx_visual')
-        self.fbl.JSCall(messageType = 'loadJS',
-                        data = 'data/FBLSubmodules/onCXLoad.js')
-
-    def _add_neuron(self, neuron_name, params = None):
+    def _enable_neuron(self, neuron_name):
         """
         Add a neuron that exists in diagram.
         Should be called by GUI after simExperimentConfig is updated.
@@ -768,39 +748,65 @@ class CX_Constructor(object):
         ----------
         neuron_name: str
                      name of the neuron
-        params: dict
-                dictionary containing the parameters of the model
         """
-        assert neuron_name not in self.config['cx']
-        self.config['cx']['disabled'] = self.removed.copy()
-        self.config['cx'][neuron_name] = new_node_data
-        rid = self._rid_dict['Neuron'][neuron_name]
-        node_data = deepcopy(self._data.nodes[rid])
-        new_node_data = {'name': node_data.pop('class'),
-                         'states': {}}
-        new_node_data['params'] = node_data
-        self.config['cx'][neuron_name] = new_node_data
-        self.rid_dict['Neuron'][neuron_name] = rid
-        self.data.add_node(rid, self._data.node[rid])
-        in_edges = self._data.in_edges(rid, data = True)
-        out_edges = self._data.out_edges(rid, data = True)
-        for pre, post, k in list(in_edges):
-            if pre in self.data:
-                self.data.add_edge(pre, post, **k)
+        if neuron_name in self.config['inactive']['neuron']:
+            self.config['active']['neuron'][neuron_name] = \
+                self.config['inactive']['neuron'].pop(neuron_name)
 
-        for pre, post, k in list(out_edges):
-            if post in self.data:
-                self.data.add_edge(pre, post, **k)
-                if k['class'] == 'ArborizesIn':
-                    subregion = self.data.node[post]['name']
-                    if 'b' in k['kind']:
-                        self.subregion_arborization[subregion]['b'].add(rid)
-                    if 's' in k['kind']:
-                        self.subregion_arborization[subregion]['s'].add(rid)
+            rid = self.rid_dict['Neuron'][neuron_name]
 
-        config_tosend = json.dumps(self.config)
-        self.fbl.JSCall(messageType = 'setExperimentConfig',
-                        data = config_tosend)
+            in_edges = self.data.in_edges(rid, data = True)
+            out_edges = self.data.out_edges(rid, data = True)
+
+            for pre, post, k in list(in_edges):
+                if k['class'] == 'SendsTo':
+                    if self.data.node[pre]['class'] == 'Synapse':
+                        self._enable_synapse(self.data.node[pre]['name'])
+
+            for pre, post, k in list(out_edges):
+                if k['class'] == 'SendsTo':
+                    if self.data.node[post]['class'] == 'Synapse':
+                        self._enable_synapse(self.data.node[post]['name'])
+
+    def enable_synapses(self, synapses):
+        """
+        Enable synapses that exist in the diagram.
+
+        Parameters
+        ----------
+        synapses:  list of synapse names
+        """
+        for synapse in synapses:
+            self._enable_synapse(synapse)
+        self.send_to_GFX()
+
+    def _enable_synapse(self, synapse_name):
+        if synapse_name in self.config['inactive']['synapse']:
+            self.config['active']['synapse'][synapse_name] = \
+                self.config['inactive']['synapse'].pop(synapse_name)
+            rid = self.rid_dict['Synapse'][synapse_name]
+            subregion = self.subregions.enable_synapse(synapse_name)
+            if subregion is not None:
+                if subregion in self.config['inactive']['subregion']:
+                    self.config['active']['subregion'][subregion] = \
+                        self.config['inactive']['subregion'].pop(subregion)
+
+    def enable_subregions(self, subregions):
+        """
+        Enable subregions that exist in the diagram.
+
+        Parameters
+        ----------
+        subregions:  list of subregion names
+        """
+        for subregion in subregions:
+            self._enable_subregion(subregion)
+        self.send_to_GFX()
+
+    def _enable_subregion(self, subregion_name):
+        if subregion_name in self.config['inactive']['subregion']:
+            for synapse in list(self.subregions.disabled_synapses[subregion_name]):
+                self._enable_synapse(synapse)
 
     def process_configuration(self):
         updated = self.fbl.simExperimentConfig['cx']['updated']
@@ -915,9 +921,6 @@ class CX_Constructor(object):
         return rid
 
     ## End of Operations on the Graph
-
-
-
     def get_node_name(self, rid):
         return self.data.nodes[rid]['name']
 
@@ -928,113 +931,23 @@ class CX_Constructor(object):
             subregion_name = '{}/{}'.format(neuropil, region)
         return subregion_name
 
-
-
     def get_next_rid(self):
         return '{}'.format(next(self.add_node_count))
 
-    def add_new_neuron(self, neuron_name, parsed_name = None):
-        Neuropils = self.rid_dict['Neuropil']
-        Tracts = self.rid_dict['Tract']
-        Subregions = self.rid_dict['Subregion']
-        if parsed_name is None:
-            parsed_name = self.parser.parse(neuron_name)
-        neuron_rid = self.get_next_rid()
-        self.add_node(neuron_rid, {'class': 'Neuron', 'name': neuron_name})
+    def neuron_uid_by_family(self, family, subregion):
+        """
+        Returns the uid of neuron that belongs to the family
+        and that has dendrites innervating subregion
 
-        # If multiple dendrite arborization, pick one randomly
-        dendrite_neuropils = set([arbor['neuropil'] for arbor in parsed_name \
-                                  if 's' in arbor['neurite']])
-        neuropil = dendrite_neuropils.pop()
-        self.add_Owns(Neuropils[neuropil], neuron_rid)
-
-        # 2. Check if need to be Owned by Tracts
-        axon_neuropils = set([arbor['neuropil'] for arbor in parsed_name \
-                              if 'b' in arbor['neurite']])
-        for axon_neuropil in axon_neuropils:
-            if neuropil != axon_neuropil:
-                neuropil_pair = frozenset(
-                                [neuropil, axon_neuropil])
-                tract_name = '-'.join(sorted(list(neuropil_pair)))
-                if tract_name not in Tracts:
-                    Tracts[tract_name] = self.add_Tract(neuropil_pair)
-                self.add_Owns(Tracts[tract_name], neuron_rid)
-
-        # 3. add AborizesIn
-        for arbor in parsed_name:
-            for b in arbor['regions']:
-                subregion_name = self.get_subregion_name(
-                                        b, arbor['neuropil'])
-                self.add_ArborizesIn(neuron_rid,
-                                     Subregions[subregion_name],
-                                     arbor['neurite'])
-
-        # 4. Add Synapses
-        for arbor in parsed_name:
-            for b in arbor['regions']:
-                subregion_name = self.get_subregion_name(
-                                        b, arbor['neuropil'])
-                sr_rid = Subregions[subregion_name]
-                if 'b' in arbor['neurite']:
-                    for post_rid in self.subregion_arborization[subregion_name]['s']:
-                        if neuron_rid != post_rid:
-                            syn_rid = self.get_next_rid()
-                            name = '{}->{}_in_{}'.format(
-                                self.get_node_name(neuron_rid),
-                                self.get_node_name(post_rid),
-                                subregion_name.replace('/','-'))
-                            self.add_node(syn_rid,
-                                          {
-                                           'class': 'Synapse',
-                                           'name': name
-                                          })
-                            self.add_SendsTo(neuron_rid, syn_rid)
-                            self.add_SendsTo(syn_rid, post_rid)
-                            post_neuronpil_rid = self.owned_by(
-                                                    post_rid,
-                                                    'Neuropil')[0]
-                            post_neuropil = self.get_node_name(
-                                                    post_neuropil_rid)
-                            self.add_Owns(sr_rid, syn_rid)
-                            self.add_Owns(post_neuropil_rid, syn_rid)
-
-                            if arbor['neuropil'] != post_neuropil:
-                                if neuropil != post_neuropil:
-                                    neuropil_pair = frozenset([neuropil, post_neuropil])
-                                    tract_name = '-'.join(sorted(list(neuropil_pair)))
-                                    if tract_name not in Tracts:
-                                        Tracts[tract_name] = self.add_Tract(neuropil_pair)
-                                    self.add_owns(Tracts[tract_name], neuron_rid)
-                elif 's' in arbor['neurite']:
-                    for pre_rid in self.subregion_arborization[subregion_name]['b']:
-                        if neuron_rid != pre_rid:
-                            syn_rid = self.get_next_rid()
-                            name = '{}->{}_in_{}'.format(
-                                self.get_node_name(pre_rid),
-                                self.get_node_name(neuron_rid),
-                                subregion_name.replace('/','-'))
-                            self.add_node(syn_rid,
-                                           {
-                                           'class': 'Synapse',
-                                           'name': name
-                                           })
-                            self.add_SendsTo(pre_rid, syn_rid)
-                            self.add_SendsTo(syn_rid, neuron_rid)
-                            self.add_Owns(sr_rid, syn_rid)
-                            self.add_Owns(Neuropils[neuropil], syn_rid)
-
-                            if arbor['neuropil'] != neuropil:
-                                pre_neuronpil_rid = self.owned_by(
-                                                        pre_rid,
-                                                        'Neuropil')[0]
-                                pre_neuropil = self.get_node_name(
-                                                    pre_neuropil_rid)
-                                if neuropil != pre_neuropil:
-                                    neuropil_pair = frozenset([pre_neuropil, neuropil])
-                                    tract_name = '-'.join(sorted(list(neuropil_pair)))
-                                    if tract_name not in Tracts:
-                                        Tracts[tract_name] = self.add_Tract(neuropil_pair)
-                                    self.add_Owns(Tracts[tract_name],
-                                                  neuron_rid)
-
-        return neuron_rid
+        Parameters
+        ----------
+        family: a Neuron family name (e.g., PB-EB-LAL)
+        subregion: name of the subregion that the neuron has dendrites
+        """
+        rids = set([rid for neuron_name, rid in self.rid_dict['Neuron'].items()\
+                if self.data.node[rid]['family'] == family and \
+                neuron_name in self.config['active']['neuron']])
+        neurons = []
+        for rid in rids.intersection(self.subregion_arborization[subregion]['s']):
+            neurons.extend(self.find_predecessor_by_edge_class(rid, 'Models'))
+        return neurons
