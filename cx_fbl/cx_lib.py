@@ -688,7 +688,8 @@ class CX_Constructor(object):
 
     ## End of Removing Components
 
-    def execute(self, input_processors = [], steps = None, dt = None):
+    def execute(self, input_processors = {}, output_processors = {},
+                steps = None, dt = None):
         res_info = self.fbl.client.session.call(u'ffbo.processor.server_information')
         msg = {"user": self.fbl.client._async_session._session_id,
                "servers": {'na': self.fbl.naServerID, 'nk': list(res_info['nk'].keys())[0]}}
@@ -701,6 +702,7 @@ class CX_Constructor(object):
         #     if len([k for k,v in a.items() if v['class'] == 'Port']) == 0:
         #         del res['data']['Pattern'][i]
         self.fbl.execute_multilpu(res, inputProcessors = input_processors,
+                                  outputProcessors = output_processors,
                                   steps = steps, dt = dt)
 
     def get_result(self):
@@ -714,18 +716,15 @@ class CX_Constructor(object):
                 sim_output_new = json.loads(self.fbl.data[i]['data']['data'])
             except:
                 break
-        bs = []
-        neurons = []
-        for key in sim_output['data'].keys():
-            A = np.array(sim_output['data'][key])
-            b = A[:,1]
-            name = self.data.node[eval(key).decode('utf-8') if key[0]=='b' else key]['name']
-            neurons.append(name)
-            bs.append(b)
-
-        B = np.array(bs)
-        print('Shape of Results:', B.shape)
-        return B, neurons
+        result = {}
+        for key, value in sim_output['data'].items():
+            node = self.data.node[eval(key).decode('utf-8') if key[0]=='b' else key]
+            if node['class'] == 'Port':
+                continue
+            name = node['name']
+            result[name] = {k: {'data': np.array(v['data']), 'dt': v['dt']} \
+                            for k, v in value.items()}
+        return result
 
     def enable_neurons(self, neurons):
         """
@@ -848,6 +847,9 @@ class CX_Constructor(object):
         rids =  self.owns(self.rid_dict['Subregion'][subregion_name], 'Synapse')
         synapses = [self.data.node[k]['name'] for k in rids]
         return synapses
+
+    def find_models(self, rid):
+        return self.find_predecessor_by_edge_class(rid, 'Models')
 
     def check_if_neuron_exists(self, neuron_name):
         """
