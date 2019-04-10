@@ -111,8 +111,8 @@ neuropil_to_subregions = {'BU': ['R{}'.format(i) for i in range(1,81)],
                         'cre': ['LRB', 'LCRE']}
 
 
-neuropil_to_file_list = {'BU': hypo_data.files('bu_eb_1.csv'),
-                         'bu': hypo_data.files('bu_eb_2.csv'),
+neuropil_to_file_list = {'BU': hypo_data.files('bu_eb_r.csv'),
+                         'bu': hypo_data.files('bu_eb_l.csv'),
                          'FB': real_data.files('fb_local.csv'), #+\
                          'EB': real_data.files('eb_lal_pb.csv'),
                          'PB': real_data.files('pb*.csv')#+\
@@ -173,14 +173,13 @@ for neuropil in neuropil_to_file_list.keys():
         with open(file_name, 'r') as f:
             r = csv.reader(f, delimiter=' ')
             for row in r:
-                d = {'name': row[0], 'family': file_to_family[file_name],
-                     'neuropil': neuropil}
+                d = {'name': row[0], 'family': file_to_family[file_name]}
 
                 # Add 'neuropil' attrib to each neuron data entry to enable ETL to
                 # link each Neuron node to the appropriate Neuropil node:
 #                 neuron_data.append(d)
-                node = graph.Neurons.create(name = d['name'],
-                                            family = file_to_family[file_name])
+                node = graph.Neurons.create(name = d['name'])
+                node.update(**d)
                 neuron_name_to_node[d['name']] = node
                 graph.Owns.create(neuropil_name_to_node[neuropil], node)
                 neuron_rid_to_neuropil[node._id] = neuropil_name_to_node[neuropil]
