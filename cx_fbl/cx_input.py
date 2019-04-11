@@ -7,10 +7,12 @@ import numpy as np
 from neurokernel.LPU.InputProcessors.BaseInputProcessor import BaseInputProcessor
 
 class BU_InputProcessor(BaseInputProcessor):
-    def __init__(self, shape, dt, dur, name, video_config, rf_config, neurons):
+    def __init__(self, shape, dt, dur, name, video_config, rf_config, neurons,
+                 record_file = None, record_interval = 1):
         video_cls = Video_factory(video_config.get('type', 'moving_bar_l2r'))
         self.video = video_cls(shape, dt, dur, video_config.get('bar_width', 50),
-                               record_file = video_config.get('record', None))
+                               record_file = video_config.get('record', None),
+                               record_interval = video_config.get('record_interval', 1))
         uids = list(neurons.keys())
         neuron_names = [neurons[n]['name'] for n in uids]
         neuron_ids = np.array([int(name.split('/')[1][1:]) for name in neuron_names])
@@ -29,12 +31,16 @@ class BU_InputProcessor(BaseInputProcessor):
         var_list = [('I', uids)]
         self.name = name
         # self.n_inputs = 80
-        self.filter_filename = '{}_filters.h5'.format(self.name)
-        super(BU_InputProcessor, self).__init__(var_list)
+        #self.filter_filename = '{}_filters.h5'.format(self.name)
+        super(BU_InputProcessor, self).__init__(var_list,
+                                                sensory_file = self.video.record_file,
+                                                sensory_interval = self.video.record_interval,
+                                                input_file = record_file,
+                                                input_interval = record_interval)
 
     def pre_run(self):
         self.video.pre_run()
-        self.fc.create_filters(self.filter_filename)
+        self.fc.create_filters()
         # self.file = h5py.File('{}_inputs.h5'.format(self.name), 'w')
         # self.file.create_dataset('I',
         #                          (0, self.n_inputs),
@@ -61,10 +67,12 @@ class BU_InputProcessor(BaseInputProcessor):
             pass
 
 class PB_InputProcessor(BaseInputProcessor):
-    def __init__(self, shape, dt, dur, name, video_config, rf_config, neurons):
+    def __init__(self, shape, dt, dur, name, video_config, rf_config, neurons,
+                 record_file = None, record_interval = 1):
         video_cls = Video_factory(video_config.get('type', 'moving_bar_l2r'))
         self.video = video_cls(shape, dt, dur, video_config.get('bar_width', 50),
-                               record_file = video_config.get('record', None))
+                               record_file = video_config.get('record', None),
+                               record_interval = video_config.get('record_interval', 1))
         num_glomeruli = rf_config.get('num_glomeruli', 18)
         self.fr = RectangularFilterBank(shape, num_glomeruli)
         uids = list(neurons.keys())
@@ -79,7 +87,11 @@ class PB_InputProcessor(BaseInputProcessor):
         var_list = [('I', uids)]
         self.name = name
         # self.n_inputs = 18
-        super(PB_InputProcessor, self).__init__(var_list)
+        super(PB_InputProcessor, self).__init__(var_list,
+                                                sensory_file = self.video.record_file,
+                                                sensory_interval = self.video.record_interval,
+                                                input_file = record_file,
+                                                input_interval = record_interval)
 
     def pre_run(self):
         self.video.pre_run()
@@ -114,44 +126,48 @@ class CX_Video(object):
     """
     Create a test video signal.
     """
-    def __init__(self, shape, dt, dur, record_file = None):
+    def __init__(self, shape, dt, dur, record_file = None, record_interval = 1):
         self.shape = shape
         self.dt = dt
         self.dur = dur
         self.N_t = int(self.dur/self.dt)
         self.frame = 0
         self.record_file = record_file
+        self.record_interval = record_interval
+        self.record_count = 0
 
     def run_step(self):
         frame = self.generate_frame()
         self.frame += 1
-        if self.record_file:
-            self.record_frame()
+        if self.record:
+            if self.record_count == 0:
+                self.record_frame()
+            self.record_count = (self.record_count+1)%self.record_interval
         return frame
 
     def pre_run(self):
         if self.record_file is not None:
             self.file = h5py.File(self.record_file, 'w')
-            self.file.create_dataset('video',
+            self.file.create_dataset('sensory',
                                      (0, self.shape[0], self.shape[1]),
                                      dtype = np.double,
                                      maxshape=(None, self.shape[0],
                                                self.shape[1]))
-            self.record_file = True
+            self.record = True
         else:
-            self.record_file = False
+            self.record = False
         self.data = np.empty(self.shape, np.double)
 
     def record_frame(self):
-        self.file['video'].resize((self.file['video'].shape[0]+1,
+        self.file['sensory'].resize((self.file['sensory'].shape[0]+1,
                                          self.shape[0], self.shape[1]))
-        self.file['video'][-1,:,:] = self.data
+        self.file['sensory'][-1,:,:] = self.data
 
     def generate_frame(self):
         pass
 
     def close_file(self):
-        if self.record_file:
+        if self.record:
             self.file.close()
 
     def __del__(self):
@@ -161,9 +177,11 @@ class CX_Video(object):
             pass
 
 class moving_bar_l2r(CX_Video):
-    def __init__(self, shape, dt, dur, bar_width, record_file = None):
+    def __init__(self, shape, dt, dur, bar_width,
+                 record_file = None, record_interval = 1):
         super(moving_bar_l2r, self).__init__(shape, dt, dur,
-                                             record_file = record_file)
+                                             record_file = record_file,
+                                             record_interval = record_interval)
         self.bar_width = bar_width
 
     def generate_frame(self):
@@ -173,9 +191,11 @@ class moving_bar_l2r(CX_Video):
         return self.data
 
 class moving_bar_r2l(CX_Video):
-    def __init__(self, shape, dt, dur, bar_width, record_file = None):
+    def __init__(self, shape, dt, dur, bar_width,
+                 record_file = None, record_interval = 1):
         super(moving_bar_r2l, self).__init__(shape, dt, dur,
-                                             record_file = record_file)
+                                             record_file = record_file,
+                                             record_interval = record_interval)
         self.bar_width = bar_width
 
     def generate_frame(self):
@@ -348,7 +368,6 @@ class RectangularFilterBank(object):
         filters = np.empty((self.n, N_y, N_x), np.float64)
 
         for j, n_x_offset in enumerate(n_x_offsets):
-            print(j, n_x_offset)
             filters[j] = self.rect_mat(self.shape, n_x_offset, self.n)
         self.filters = filters
         file = h5py.File('PB_filters.h5','w')
@@ -365,46 +384,3 @@ class RectangularFilterBank(object):
             return self.normalize_output(result)
         else:
             return result
-
-
-if __name__ == '__main__':
-    shape = (200, 500)
-    dt = 1e-4
-    dur = 0.2
-    video_type = 'moving_bar_l2r'
-    bar_width = 50
-    BU_video_config = {'type': video_type,
-                    'bar_width': bar_width,
-                    'record': 'video.h5'}
-    BU_rf_config = {'sigma': 0.05}
-    bu_video_config = {'type': video_type,
-                    'bar_width': bar_width,
-                    'record': None}
-    bu_rf_config = {'sigma': 0.05}
-    PB_video_config = {'type': video_type,
-                       'bar_width': bar_width,
-                       'record': None}
-    PB_rf_config = {'num_glomeruli': 18}
-
-    BU_rid = cx.rid_dict['Neuropil']['BU']
-    BU_neurons = {neuron: cx.data.node[cx.find_predecessor_by_edge_class(neuron, 'Models')[0]] \
-                  for neuron in cx.owns(BU_rid, 'Neuron')}
-    BU_IP = BU_InputProcessor(shape, dt, dur,
-                              BU_video_config, BU_rf_config,
-                              BU_neurons)
-
-    bu_rid = cx.rid_dict['Neuropil']['bu']
-    bu_neurons = {neuron: cx.data.node[cx.find_predecessor_by_edge_class(neuron, 'Models')[0]] \
-                  for neuron in cx.owns(bu_rid, 'Neuron')}
-
-    bu_IP = BU_InputProcessor(shape, dt, dur,
-                              bu_video_config, bu_rf_config,
-                              bu_neurons)
-
-    PB_subregions = ['PB/L{}'.format(i) for i in range(1,10)] + \
-                    ['PB/R{}'.format(i) for i in range(1,10)]
-    PB_rids = itertools.chain.from_iterable([cx.neuron_uid_by_family('PB-EB-LAL', k) for k in PB_subregions])
-    PB_neurons = {rid: cx.data.node[rid] for rid in PB_rids}
-    PB_IP = PB_InputProcessor(shape, dt, dur,
-                              PB_video_config, PB_rf_config,
-                              PB_neurons)

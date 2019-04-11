@@ -6,6 +6,8 @@ import time
 
 import networkx as nx
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.axes as ax
 
 from .parse_arborization import NeuronArborizationParser
 from .add_neuron import generate_svg
@@ -706,24 +708,29 @@ class CX_Constructor(object):
                                   steps = steps, dt = dt)
 
     def get_result(self):
-        i = -2
-        sim_output = json.loads(self.fbl.data[-1]['data']['data'])
-        sim_output_new = json.loads(self.fbl.data[i]['data']['data'])
-        while 'ydomain' in sim_output_new.keys():
-            sim_output['data'].update(sim_output_new['data'])
-            i = i - 1
-            try:
-                sim_output_new = json.loads(self.fbl.data[i]['data']['data'])
-            except:
+        result = {'sensory': {}, 'input': {}, 'output': {}}
+        i = -1
+        while 'data' in self.fbl.data[i]['data']:
+            temp = json.loads(self.fbl.data[i]['data']['data'])
+            i -= 1
+            if 'start' in temp:
                 break
-        result = {}
-        for key, value in sim_output['data'].items():
-            node = self.data.node[eval(key).decode('utf-8') if key[0]=='b' else key]
-            if node['class'] == 'Port':
-                continue
-            name = node['name']
-            result[name] = {k: {'data': np.array(v['data']), 'dt': v['dt']} \
-                            for k, v in value.items()}
+            for data_type, data in temp.items():
+                for key, value in data.items():
+                    k = eval(key).decode('utf-8') if key[0]=='b' else key
+                    if data_type == 'sensory':
+                        result[data_type][k] = [{'dt': val['dt'],
+                                                 'data': np.array(val['data'])}\
+                                                for val in value]
+                    else:
+                        node = self.data.node[k]
+                        if node['class'] == 'Port':
+                            continue
+                        name = node['name']
+                        result[data_type][name] = {k: {'data': np.array(v['data']),
+                                                       'dt': v['dt']} \
+                                                   for k, v in value.items()}
+        self.result = result
         return result
 
     def enable_neurons(self, neurons):
@@ -936,7 +943,7 @@ class CX_Constructor(object):
     def get_next_rid(self):
         return '{}'.format(next(self.add_node_count))
 
-    def neuron_uid_by_family(self, family, subregion):
+    def neuron_uid_by_family(self, family, subregion, neurite = 's'):
         """
         Returns the uid of neuron that belongs to the family
         and that has dendrites innervating subregion
@@ -950,6 +957,42 @@ class CX_Constructor(object):
                 if self.data.node[rid]['family'] == family and \
                 neuron_name in self.config['active']['neuron']])
         neurons = []
-        for rid in rids.intersection(self.subregion_arborization[subregion]['s']):
+        for rid in rids.intersection(self.subregion_arborization[subregion][neurite]):
             neurons.extend(self.find_predecessor_by_edge_class(rid, 'Models'))
         return neurons
+
+    @classmethod
+    def raster_plot(cls, data):
+        fig1, axes = plt.subplots(1,1, figsize=(22,10))
+        j = 0
+        for name, spike_time in data:
+            axes.eventplot(spike_time, lineoffsets=j, linelengths = 0.5)
+            j += 1
+        plt.grid(b=True, which = 'minor', axis='y')
+        axes.set_yticks(range(j))
+        axes.set_yticklabels([name for name, spike_time in data])
+        plt.show()
+
+    def plot_PB_EB_LAL(self, order = 'PB'):
+        if order == 'PB':
+            uids = [self.neuron_uid_by_family('PB-EB-LAL', 'PB/L{}'.format(10-i)) \
+                    for i in range(1,10)]
+            uids.extend([self.neuron_uid_by_family('PB-EB-LAL', 'PB/R{}'.format(i)) \
+                         for i in range(1,10)])
+        elif order == 'EB':
+            uids = [self.neuron_uid_by_family('PB-EB-LAL', 'EB/L{}'.format(i), 'b') \
+                    for i in range(1,9)]
+            uids.extend([self.neuron_uid_by_family('PB-EB-LAL', 'EB/R{}'.format(i)) \
+                         for i in range(1,9)])
+        else:
+            raise ValueError('Order has to be either PB or EB.')
+        data = []
+        outputs = self.result['output']
+        for uid in uids:
+            if len(uid):
+                names = [self.data.node[n]['name'] for n in uid]
+                for name in names:
+                    if name in outputs:
+                        spike_time = outputs[name]['spike_time']['data']
+                        data.append((name, spike_time))
+        self.raster_plot(data)
