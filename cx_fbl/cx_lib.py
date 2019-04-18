@@ -8,6 +8,7 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.axes as ax
+from matplotlib import animation
 
 from .parse_arborization import NeuronArborizationParser
 from .add_neuron import generate_svg
@@ -708,28 +709,56 @@ class CX_Constructor(object):
                                   steps = steps, dt = dt)
 
     def get_result(self):
-        result = {'sensory': {}, 'input': {}, 'output': {}}
+        message = []
         i = -1
-        while 'data' in self.fbl.data[i]['data']:
+        while self.fbl.data[i]['messageType'] == 'Data':
             temp = json.loads(self.fbl.data[i]['data']['data'])
             i -= 1
-            if 'start' in temp:
+            if type(temp) != str:
+                meta = temp
                 break
-            for data_type, data in temp.items():
-                for key, value in data.items():
-                    k = eval(key).decode('utf-8') if key[0]=='b' else key
-                    if data_type == 'sensory':
-                        result[data_type][k] = [{'dt': val['dt'],
-                                                 'data': np.array(val['data'])}\
-                                                for val in value]
-                    else:
-                        node = self.data.node[k]
-                        if node['class'] == 'Port':
-                            continue
-                        name = node['name']
-                        result[data_type][name] = {k: {'data': np.array(v['data']),
-                                                       'dt': v['dt']} \
-                                                   for k, v in value.items()}
+            message.append(temp)
+        temp = json.loads(''.join(message[::-1]))
+
+        result = {'sensory': {}, 'input': {}, 'output': {}, 'meta': meta}
+        for data_type, data in temp.items():
+            for key, value in data.items():
+                k = eval(key).decode('utf-8') if key[0]=='b' else key
+                if data_type == 'sensory':
+                    result[data_type][k] = [{'dt': val['dt'],
+                                             'data': np.array(val['data'])}\
+                                            for val in value]
+                else:
+                    node = self.data.node[k]
+                    if node['class'] == 'Port':
+                        continue
+                    name = node['name']
+                    result[data_type][name] = {k: {'data': np.array(v['data']),
+                                                   'dt': v['dt']} \
+                                               for k, v in value.items()}
+
+        #
+        # i = -1
+        # while 'data' in self.fbl.data[i]['data']:
+        #     temp = json.loads(self.fbl.data[i]['data']['data'])
+        #     i -= 1
+        #     if 'start' in temp:
+        #         break
+        #     for data_type, data in temp.items():
+        #         for key, value in data.items():
+        #             k = eval(key).decode('utf-8') if key[0]=='b' else key
+        #             if data_type == 'sensory':
+        #                 result[data_type][k] = [{'dt': val['dt'],
+        #                                          'data': np.array(val['data'])}\
+        #                                         for val in value]
+        #             else:
+        #                 node = self.data.node[k]
+        #                 if node['class'] == 'Port':
+        #                     continue
+        #                 name = node['name']
+        #                 result[data_type][name] = {k: {'data': np.array(v['data']),
+        #                                                'dt': v['dt']} \
+        #                                            for k, v in value.items()}
         self.result = result
         return result
 
@@ -962,18 +991,33 @@ class CX_Constructor(object):
         return neurons
 
     @classmethod
-    def raster_plot(cls, data):
-        fig1, axes = plt.subplots(1,1, figsize=(22,10))
+    def raster_plot(cls, data, max_time = np.inf, xlim = None):
+        fig1, axes = plt.subplots(1,1, figsize=(10,8))
+        fig1.subplots_adjust(left = 0.3)
         j = 0
         for name, spike_time in data:
-            axes.eventplot(spike_time, lineoffsets=j, linelengths = 0.5)
+            axes.eventplot(np.select([spike_time < max_time], [spike_time]),
+                           lineoffsets = j, linelengths = 0.5)
             j += 1
         plt.grid(b=True, which = 'minor', axis='y')
+        axes.set_xlim(right = xlim)
         axes.set_yticks(range(j))
         axes.set_yticklabels([name for name, spike_time in data])
         plt.show()
 
+    @classmethod
+    def _raster_plot(cls, axes, data, max_time = np.inf, xlim = None):
+        j = 0
+        for name, spike_time in data:
+            axes.eventplot(np.select([spike_time < max_time], [spike_time]),
+                           lineoffsets = j, linelengths = 0.5)
+            j += 1
+
     def plot_PB_EB_LAL(self, order = 'PB'):
+        data = self.get_PB_EB_LAL_data(order = order)
+        self.raster_plot(data)
+
+    def get_PB_EB_LAL_data(self, order = 'PB'):
         if order == 'PB':
             uids = [self.neuron_uid_by_family('PB-EB-LAL', 'PB/L{}'.format(10-i)) \
                     for i in range(1,10)]
@@ -995,4 +1039,35 @@ class CX_Constructor(object):
                     if name in outputs:
                         spike_time = outputs[name]['spike_time']['data']
                         data.append((name, spike_time))
-        self.raster_plot(data)
+        return data
+
+    def animate_PB_EB_LAL(self, order = 'PB'):
+        """
+        Generate an animation object that can be played back
+        in a notebook by HTML(anim.to_html5_video())
+        """
+        data = self.get_PB_EB_LAL_data(order = order)
+        video = self.result['sensory']['BU'][0]['data']
+        dt = self.result['sensory']['BU'][0]['dt']
+        dur = self.result['meta']['dur']
+
+        fig, ax = plt.subplots(2, 1, gridspec_kw = {'height_ratios': [1,3]},
+                               figsize = (10,8))
+        fig.subplots_adjust(left = 0.3)
+        ax[0].set_axis_off()
+        ax[1].set_xlim(right = dur)
+        ax[1].set_yticks(range(len(data)))
+        ax[1].set_yticklabels([name for name, _ in data])
+        max_time = np.inf
+
+        def animate(i):
+            ax[0].imshow(video[i])
+            j = 0
+            for name, spike_time in data:
+                ax[1].eventplot(np.select([spike_time < dt*i], [spike_time]),
+                                lineoffsets = j, linelength = 0.5)
+                j += 1
+
+        anim = animation.FuncAnimation(fig, animate, frames = video.shape[0],
+                                       interval = dur*10/video.shape[0])
+        return anim
