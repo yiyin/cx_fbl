@@ -1069,5 +1069,5 @@ class CX_Constructor(object):
                 j += 1
 
         anim = animation.FuncAnimation(fig, animate, frames = video.shape[0],
-                                       interval = dur*10/video.shape[0])
+                                       interval = dur*10/video.shape[0]*1000)
         return anim
